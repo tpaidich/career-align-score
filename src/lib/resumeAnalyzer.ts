@@ -1,5 +1,4 @@
 import * as pdfjsLib from 'pdfjs-dist/build/pdf';
-import { TfIdf, WordTokenizer } from 'natural';
 
 // Set up PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js`;
@@ -41,10 +40,12 @@ async function extractTextFromPDF(file: File): Promise<string> {
   return fullText;
 }
 
-// Clean and tokenize text
+// Clean and tokenize text (browser-compatible implementation)
 function cleanAndTokenize(text: string): string[] {
-  const tokenizer = new WordTokenizer();
-  return tokenizer.tokenize(text.toLowerCase()) || [];
+  // Convert to lowercase and remove special characters, keeping only letters and numbers
+  const cleaned = text.toLowerCase().replace(/[^\w\s]/g, ' ');
+  // Split by whitespace and filter out empty strings and short words
+  return cleaned.split(/\s+/).filter(word => word.length > 2);
 }
 
 // Extract skills from text
@@ -55,44 +56,71 @@ function extractSkills(text: string): string[] {
   );
 }
 
-// Calculate TF-IDF similarity
+// Calculate TF-IDF similarity (custom implementation)
 function calculateTFIDFSimilarity(text1: string, text2: string): number {
-  const tfidf = new TfIdf();
+  const tokens1 = cleanAndTokenize(text1);
+  const tokens2 = cleanAndTokenize(text2);
   
-  tfidf.addDocument(cleanAndTokenize(text1));
-  tfidf.addDocument(cleanAndTokenize(text2));
+  // Calculate term frequencies
+  const tf1 = calculateTermFrequency(tokens1);
+  const tf2 = calculateTermFrequency(tokens2);
   
-  const terms1 = new Set(cleanAndTokenize(text1));
-  let similarity = 0;
-  let totalTerms = 0;
+  // Get all unique terms
+  const allTerms = new Set([...Object.keys(tf1), ...Object.keys(tf2)]);
   
-  terms1.forEach(term => {
-    const score1 = tfidf.tfidf(term, 0);
-    const score2 = tfidf.tfidf(term, 1);
-    if (score1 > 0 && score2 > 0) {
-      similarity += Math.min(score1, score2);
-    }
-    totalTerms++;
+  // Calculate cosine similarity
+  let dotProduct = 0;
+  let magnitude1 = 0;
+  let magnitude2 = 0;
+  
+  allTerms.forEach(term => {
+    const freq1 = tf1[term] || 0;
+    const freq2 = tf2[term] || 0;
+    
+    dotProduct += freq1 * freq2;
+    magnitude1 += freq1 * freq1;
+    magnitude2 += freq2 * freq2;
   });
   
-  return totalTerms > 0 ? (similarity / totalTerms) * 100 : 0;
+  const magnitude = Math.sqrt(magnitude1) * Math.sqrt(magnitude2);
+  if (magnitude === 0) return 0;
+  
+  return (dotProduct / magnitude) * 100;
 }
 
-// Get top keywords with their TF-IDF scores
+// Calculate term frequency
+function calculateTermFrequency(tokens: string[]): { [key: string]: number } {
+  const tf: { [key: string]: number } = {};
+  const totalTokens = tokens.length;
+  
+  tokens.forEach(token => {
+    tf[token] = (tf[token] || 0) + 1;
+  });
+  
+  // Normalize by total tokens
+  Object.keys(tf).forEach(term => {
+    tf[term] = tf[term] / totalTokens;
+  });
+  
+  return tf;
+}
+
+// Get top keywords with their scores (custom implementation)
 function getTopKeywords(jobDescription: string, resumeText: string): { word: string; score: number }[] {
-  const tfidf = new TfIdf();
   const jobTokens = cleanAndTokenize(jobDescription);
   const resumeTokens = cleanAndTokenize(resumeText);
   
-  tfidf.addDocument(jobTokens);
-  tfidf.addDocument(resumeTokens);
+  // Calculate term frequencies
+  const jobTF = calculateTermFrequency(jobTokens);
+  const resumeTF = calculateTermFrequency(resumeTokens);
   
   const keywordScores: { [key: string]: number } = {};
   
-  // Get TF-IDF scores for job description terms that also appear in resume
-  jobTokens.forEach(term => {
-    if (resumeTokens.includes(term) && term.length > 2) {
-      keywordScores[term] = tfidf.tfidf(term, 0);
+  // Find keywords that appear in both texts
+  Object.keys(jobTF).forEach(term => {
+    if (resumeTF[term] && term.length > 2) {
+      // Score based on frequency in both documents
+      keywordScores[term] = (jobTF[term] + resumeTF[term]) / 2;
     }
   });
   
