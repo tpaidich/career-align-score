@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, FileText, BarChart3, Download, Target, CheckCircle, XCircle } from 'lucide-react';
+import { Upload, FileText, BarChart3, Download, Target, CheckCircle, XCircle, Sun, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
@@ -8,21 +8,26 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { analyzeFit } from '@/lib/resumeAnalyzer';
+import { useTheme } from "next-themes"; // Import useTheme hook
 
 interface AnalysisResult {
   fitScore: number;
   matchedSkills: string[];
   missingSkills: string[];
-  insights: string[];
-  topKeywords: { word: string; score: number }[];
+  insights: string[]; // This will now hold general insights *excluding* the fit message
+  fitMessage: string;
+  highlightAreas: string[]; // New field for LLM-generated highlight areas
+  projectSuggestions: string[]; // New field for LLM-generated project suggestions
 }
 
 export function ResumeFitAnalyzer() {
   const [jobDescription, setJobDescription] = useState('');
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisStage, setAnalysisStage] = useState(''); // New state for analysis stage
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const { toast } = useToast();
+  const { theme, setTheme } = useTheme(); // Initialize useTheme
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -52,17 +57,26 @@ export function ResumeFitAnalyzer() {
     }
 
     setIsAnalyzing(true);
+    setAnalysisStage("Starting analysis...");
     try {
-      const analysisResult = await analyzeFit(jobDescription, resumeFile);
-      setResult(analysisResult);
+      const analysisResult = await analyzeFit(jobDescription, resumeFile, (stage) => setAnalysisStage(stage)); // Pass stage setter
+      // Ensure the fitMessage is correctly extracted and removed from insights for display
+      const fitMessage = analysisResult.insights[0] || ""; // Get the first insight as the fit message
+      const generalInsights = analysisResult.insights.slice(1); // Remaining insights are general
+
+      setResult({
+        ...analysisResult,
+        insights: generalInsights,
+        fitMessage: fitMessage,
+      });
       toast({
         title: "Analysis Complete",
         description: `Your resume has a ${analysisResult.fitScore}% match with the job description`,
       });
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Analysis Failed",
-        description: "There was an error analyzing your resume. Please try again.",
+        description: error.message || "There was an error analyzing your resume. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -78,6 +92,7 @@ Resume Fit Analysis Report
 =========================
 
 Fit Score: ${result.fitScore}%
+Fit Message: ${result.fitMessage}
 
 Matched Skills:
 ${result.matchedSkills.map(skill => `• ${skill}`).join('\n')}
@@ -85,11 +100,14 @@ ${result.matchedSkills.map(skill => `• ${skill}`).join('\n')}
 Missing Skills:
 ${result.missingSkills.map(skill => `• ${skill}`).join('\n')}
 
-Key Insights:
-${result.insights.map(insight => `• ${insight}`).join('\n')}
+Areas to Highlight:
+${result.highlightAreas.length > 0 ? result.highlightAreas.map(area => `• ${area}`).join('\n') : 'N/A'}
 
-Top Keywords:
-${result.topKeywords.map(kw => `• ${kw.word} (${(kw.score * 100).toFixed(1)}%)`).join('\n')}
+Project Suggestions:
+${result.projectSuggestions.length > 0 ? result.projectSuggestions.map(project => `• ${project}`).join('\n') : 'N/A'}
+
+General Insights:
+${result.insights.length > 0 ? result.insights.map(insight => `• ${insight}`).join('\n') : 'N/A'}
     `;
 
     const blob = new Blob([reportContent], { type: 'text/plain' });
@@ -112,10 +130,24 @@ ${result.topKeywords.map(kw => `• ${kw.word} (${(kw.score * 100).toFixed(1)}%)
             <div className="p-2 rounded-lg gradient-primary">
               <Target className="h-6 w-6 text-primary-foreground" />
             </div>
-            <h1 className="text-2xl font-bold text-foreground">ResumeFitMatch</h1>
+            <h1 className="text-2xl font-bold text-foreground">Resume Scorer - Am I a good fit for this job?</h1>
             <Badge variant="secondary" className="ml-auto">
               AI-Powered Analysis
             </Badge>
+            {/* Dark mode toggle */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="ml-2"
+            >
+              {theme === "dark" ? (
+                <Sun className="h-5 w-5" />
+              ) : (
+                <Moon className="h-5 w-5" />
+              )}
+              <span className="sr-only">Toggle theme</span>
+            </Button>
           </div>
         </div>
       </header>
@@ -129,7 +161,8 @@ ${result.topKeywords.map(kw => `• ${kw.word} (${(kw.score * 100).toFixed(1)}%)
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
               Upload your resume and paste a job description to get an AI-powered analysis 
-              of how well your skills match the position requirements.
+              of how well your skills match the role's requirements! Receive personalized suggestions
+              and unlock key insights.
             </p>
           </div>
 
@@ -206,7 +239,7 @@ ${result.topKeywords.map(kw => `• ${kw.word} (${(kw.score * 100).toFixed(1)}%)
               {isAnalyzing ? (
                 <>
                   <BarChart3 className="mr-2 h-5 w-5 animate-pulse" />
-                  Analyzing...
+                  Analyzing... {analysisStage}
                 </>
               ) : (
                 <>
@@ -243,10 +276,8 @@ ${result.topKeywords.map(kw => `• ${kw.word} (${(kw.score * 100).toFixed(1)}%)
                       <p className="text-muted-foreground">Match Score</p>
                     </div>
                     <Progress value={result.fitScore} className="h-3" />
-                    <div className="flex justify-between text-sm text-muted-foreground">
-                      <span>0%</span>
-                      <span>Perfect Match</span>
-                      <span>100%</span>
+                    <div className="text-center text-sm text-muted-foreground mt-2">
+                      {result.fitMessage}
                     </div>
                   </div>
                 </CardContent>
@@ -293,39 +324,43 @@ ${result.topKeywords.map(kw => `• ${kw.word} (${(kw.score * 100).toFixed(1)}%)
                 </Card>
               </div>
 
-              {/* Insights */}
+              {/* Insights and Suggestions */}
               <Card className="shadow-soft">
                 <CardHeader>
-                  <CardTitle>Key Insights</CardTitle>
+                  <CardTitle>Key Insights & Suggestions</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ul className="space-y-2">
-                    {result.insights.map((insight, index) => (
-                      <li key={index} className="flex items-start gap-2">
-                        <div className="w-2 h-2 rounded-full bg-primary mt-2 flex-shrink-0" />
-                        <span className="text-sm">{insight}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
-
-              {/* Top Keywords */}
-              <Card className="shadow-soft">
-                <CardHeader>
-                  <CardTitle>Top Keywords</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {result.topKeywords.map((keyword, index) => (
-                      <div key={index} className="text-center p-3 rounded-lg bg-accent/50">
-                        <div className="font-semibold">{keyword.word}</div>
-                        <div className="text-sm text-muted-foreground">
-                          {(keyword.score * 100).toFixed(1)}%
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {result.highlightAreas.length > 0 && (
+                    <div className="mb-4">
+                      <h3 className="text-lg font-semibold mb-2">What areas can I highlight in my resume?</h3>
+                      <ul className="space-y-1 list-disc pl-5">
+                        {result.highlightAreas.map((area, index) => (
+                          <li key={index} className="text-sm">{area}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {result.projectSuggestions.length > 0 && (
+                    <div className="mb-4">
+                      <h3 className="text-lg font-semibold mb-2">What are some projects I can work on to improve my portfolio?</h3>
+                      <ul className="space-y-4">
+                        {result.projectSuggestions.map((project, index) => (
+                          <li key={index} className="text-sm whitespace-pre-wrap">{project}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {result.insights.length > 0 && result.insights[0] && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-2">General Alignment:</h3>
+                      <p className="text-sm text-muted-foreground">
+                        {result.insights[0]}
+                      </p>
+                    </div>
+                  )}
+                  {(result.highlightAreas.length === 0 && result.projectSuggestions.length === 0 && result.insights.length === 0) && (
+                    <p className="text-sm text-muted-foreground">No specific insights or suggestions were generated at this time.</p>
+                  )}
                 </CardContent>
               </Card>
             </div>
