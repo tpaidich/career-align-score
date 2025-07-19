@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { analyzeFit } from '@/lib/resumeAnalyzer';
 import { useTheme } from "next-themes"; // Import useTheme hook
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface AnalysisResult {
   fitScore: number;
@@ -18,6 +19,8 @@ interface AnalysisResult {
   fitMessage: string;
   highlightAreas: string[]; // New field for LLM-generated highlight areas
   projectSuggestions: string[]; // New field for LLM-generated project suggestions
+  resumeKeywords: string[]; // New field for LLM-generated resume keywords
+  linkedinJobLinks: string[]; // New field for LLM-generated LinkedIn job links
 }
 
 export function ResumeFitAnalyzer() {
@@ -250,7 +253,7 @@ ${result.insights.length > 0 ? result.insights.map(insight => `• ${insight}`).
             </Button>
           </div>
 
-          {/* Results Section */}
+          {/* Analysis Results */}
           {result && (
             <div className="space-y-6">
               {/* Fit Score */}
@@ -288,7 +291,7 @@ ${result.insights.length > 0 ? result.insights.map(insight => `• ${insight}`).
                 {/* Matched Skills */}
                 <Card className="shadow-soft">
                   <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-success">
+                    <CardTitle className="flex items-center gap-2 text-green-600 dark:text-green-300">
                       <CheckCircle className="h-5 w-5" />
                       Matched Skills ({result.matchedSkills.length})
                     </CardTitle>
@@ -296,7 +299,7 @@ ${result.insights.length > 0 ? result.insights.map(insight => `• ${insight}`).
                   <CardContent>
                     <div className="flex flex-wrap gap-2">
                       {result.matchedSkills.map((skill, index) => (
-                        <Badge key={index} variant="secondary" className="bg-success/10 text-success">
+                        <Badge key={index} variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                           {skill}
                         </Badge>
                       ))}
@@ -307,7 +310,7 @@ ${result.insights.length > 0 ? result.insights.map(insight => `• ${insight}`).
                 {/* Missing Skills */}
                 <Card className="shadow-soft">
                   <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-warning">
+                    <CardTitle className="flex items-center gap-2 text-red-600 dark:text-red-300">
                       <XCircle className="h-5 w-5" />
                       Missing Skills ({result.missingSkills.length})
                     </CardTitle>
@@ -315,7 +318,7 @@ ${result.insights.length > 0 ? result.insights.map(insight => `• ${insight}`).
                   <CardContent>
                     <div className="flex flex-wrap gap-2">
                       {result.missingSkills.map((skill, index) => (
-                        <Badge key={index} variant="outline" className="border-warning text-warning">
+                        <Badge key={index} variant="secondary" className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
                           {skill}
                         </Badge>
                       ))}
@@ -324,45 +327,89 @@ ${result.insights.length > 0 ? result.insights.map(insight => `• ${insight}`).
                 </Card>
               </div>
 
-              {/* Insights and Suggestions */}
-              <Card className="shadow-soft">
-                <CardHeader>
-                  <CardTitle>Key Insights & Suggestions</CardTitle>
-                </CardHeader>
-                <CardContent>
+              <Tabs defaultValue="highlight-areas" className="w-full">
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="highlight-areas">Areas to Highlight</TabsTrigger>
+                  <TabsTrigger value="project-suggestions">Project Suggestions</TabsTrigger>
+                  <TabsTrigger value="job-listings">Related Job Listings</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="highlight-areas">
                   {result.highlightAreas.length > 0 && (
-                    <div className="mb-4">
-                      <h3 className="text-lg font-semibold mb-2">What areas can I highlight in my resume?</h3>
-                      <ul className="space-y-1 list-disc pl-5">
-                        {result.highlightAreas.map((area, index) => (
-                          <li key={index} className="text-sm">{area}</li>
-                        ))}
-                      </ul>
-                    </div>
+                    <Card className="shadow-soft animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200 mt-6">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-blue-600 dark:text-blue-300">
+                          <Target className="h-5 w-5" />
+                          Areas to Highlight
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ul className="list-disc list-inside space-y-2 text-muted-foreground">
+                          {result.highlightAreas.map((area, index) => (
+                            <li key={index}>{area}</li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
                   )}
+                </TabsContent>
+
+                <TabsContent value="project-suggestions">
                   {result.projectSuggestions.length > 0 && (
-                    <div className="mb-4">
-                      <h3 className="text-lg font-semibold mb-2">What are some projects I can work on to improve my portfolio?</h3>
-                      <ul className="space-y-4">
-                        {result.projectSuggestions.map((project, index) => (
-                          <li key={index} className="text-sm whitespace-pre-wrap">{project}</li>
-                        ))}
-                      </ul>
-                    </div>
+                    <Card className="shadow-soft animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300 mt-6">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-orange-600 dark:text-orange-300">
+                          <BarChart3 className="h-5 w-5" />
+                          Project Suggestions
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ul className="list-disc list-inside space-y-2 text-muted-foreground">
+                          {result.projectSuggestions.map((project, index) => (
+                            <li key={index}>{project}</li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
                   )}
-                  {result.insights.length > 0 && result.insights[0] && (
-                    <div>
-                      <h3 className="text-lg font-semibold mb-2">General Alignment:</h3>
-                      <p className="text-sm text-muted-foreground">
-                        {result.insights[0]}
-                      </p>
-                    </div>
+                </TabsContent>
+
+                <TabsContent value="job-listings">
+                  {result.linkedinJobLinks.length > 0 ? (
+                    <Card className="shadow-soft animate-in fade-in slide-in-from-bottom-4 duration-500 delay-400 mt-6">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-indigo-600 dark:text-indigo-300">
+                          <Download className="h-5 w-5" />
+                          Related Job Listings (LinkedIn)
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ul className="list-disc list-inside space-y-2 text-muted-foreground">
+                          {result.linkedinJobLinks.map((link, index) => (
+                            <li key={index}>
+                              <a href={link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
+                                {link}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <Card className="shadow-soft animate-in fade-in slide-in-from-bottom-4 duration-500 delay-400 mt-6">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-indigo-600 dark:text-indigo-300">
+                          <Download className="h-5 w-5" />
+                          Related Job Listings (LinkedIn)
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-muted-foreground">No related job listings found. Try adjusting the job description or resume keywords.</p>
+                      </CardContent>
+                    </Card>
                   )}
-                  {(result.highlightAreas.length === 0 && result.projectSuggestions.length === 0 && result.insights.length === 0) && (
-                    <p className="text-sm text-muted-foreground">No specific insights or suggestions were generated at this time.</p>
-                  )}
-                </CardContent>
-              </Card>
+                </TabsContent>
+              </Tabs>
             </div>
           )}
         </div>

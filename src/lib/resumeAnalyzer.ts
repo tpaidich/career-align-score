@@ -6,7 +6,26 @@ const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=';
 
 // Utility function to introduce a delay
-const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+let delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+
+// Generic retry mechanism with exponential backoff
+async function retryWithExponentialBackoff<T>(fn: () => Promise<T>, retries = 5, initialDelay = 1000): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      if (attempt < retries && (error.message.includes('429') || error.message.includes('503') || error.message.includes('ECONNRESET'))) {
+        const delayTime = initialDelay * Math.pow(2, attempt) + Math.random() * 1000; // Exponential backoff with jitter
+        console.warn(`Retrying after error: ${error.message}. Attempt ${attempt + 1}/${retries}. Waiting ${delayTime}ms.`);
+        await delay(delayTime);
+        attempt++;
+      } else {
+        throw error;
+      }
+    }
+  }
+}
 
 // Set up PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
@@ -20,6 +39,17 @@ interface AnalysisResult {
   fitMessage: string;
   highlightAreas: string[]; // New field for LLM-generated highlight areas
   projectSuggestions: string[]; // New field for LLM-generated project suggestions
+  resumeKeywords: string[]; // New field for LLM-generated resume keywords
+  linkedinJobLinks: string[]; // New field for LinkedIn job links
+}
+
+interface CombinedAnalysisOutput {
+  generalInsight: string;
+  rankedMissingSkills: string[];
+  highlightAreas: string[];
+  projectSuggestions: string[];
+  matchedSkills: string[]; // New field for LLM-generated matched skills
+  resumeKeywords: string[]; // New field for LLM-generated resume keywords
 }
 
 // Common technical skills and keywords
@@ -85,10 +115,14 @@ function extractSkills(text: string): string[] {
 function calculateTFIDFSimilarity(text1: string, text2: string): number {
   const tokens1 = cleanAndTokenize(text1);
   const tokens2 = cleanAndTokenize(text2);
+  console.log("Debug TFIDF: Tokens 1 (Job Description)", tokens1);
+  console.log("Debug TFIDF: Tokens 2 (Resume Text)", tokens2);
   
   // Calculate term frequencies
   const tf1 = calculateTermFrequency(tokens1);
   const tf2 = calculateTermFrequency(tokens2);
+  console.log("Debug TFIDF: Term Frequencies 1 (Job Description)", tf1);
+  console.log("Debug TFIDF: Term Frequencies 2 (Resume Text)", tf2);
   
   // Get all unique terms
   const allTerms = new Set([...Object.keys(tf1), ...Object.keys(tf2)]);
@@ -130,317 +164,117 @@ function calculateTermFrequency(tokens: string[]): { [key: string]: number } {
   return tf;
 }
 
-// Get top keywords with their scores (custom implementation)
-// This function is being removed/repurposed as per the new design.
-// Its functionality will be absorbed by more specific LLM calls for insights.
-// async function getTopKeywords(jobDescription: string, resumeText: string): Promise<{ word: string; score: number }[]> {
-//   try {
-//     // Attempt to extract keywords using Gemini LLM
-//     const llmKeywords = await extractKeywordsWithGemini(jobDescription, resumeText);
-//     if (llmKeywords && llmKeywords.length > 0) {
-//       // Assign a default high score to LLM-extracted keywords for prioritization
-//       return llmKeywords.map(word => ({ word, score: 1.0 }));
-//     }
-//   } catch (error) {
-//     console.warn("Gemini LLM keyword extraction failed, falling back to rule-based extraction:", error);
-//     // Fallback to existing logic if LLM extraction fails
-//   }
-
-//   const jobTokens = cleanAndTokenize(jobDescription);
-//   const resumeTokens = cleanAndTokenize(resumeText);
-  
-//   // Calculate term frequencies
-//   const jobTF = calculateTermFrequency(jobTokens);
-//   const resumeTF = calculateTermFrequency(resumeTokens);
-  
-//   const keywordScores: { [key: string]: number } = {};
-  
-//   // Combine common skills and technical keywords for a comprehensive list
-//   const relevantTerms = new Set([
-//     ...commonSkills.map(s => s.toLowerCase()),
-//     ...technicalKeywords.map(k => k.toLowerCase())
-//   ]);
-
-//   // Find keywords that appear in both texts and are relevant terms
-//   Object.keys(jobTF).forEach(term => {
-//     if (resumeTF[term] && term.length > 2 && relevantTerms.has(term)) {
-//       // Score based on frequency in both documents
-//       keywordScores[term] = (jobTF[term] + resumeTF[term]) / 2;
-//     }
-//   });
-  
-//   // If less than 8 relevant keywords, fill with other common keywords that are not stop words
-//   if (Object.keys(keywordScores).length < 8) {
-//     const allCommonKeywords = new Set([...Object.keys(jobTF), ...Object.keys(resumeTF)]);
-//     allCommonKeywords.forEach(term => {
-//       if (term.length > 2 && !stopWords.has(term) && !relevantTerms.has(term)) {
-//         if (jobTF[term] && resumeTF[term]) {
-//           keywordScores[term] = (jobTF[term] + resumeTF[term]) / 2;
-//         }
-//       }
-//     });
-//   }
-
-//   return Object.entries(keywordScores)
-//     .sort(([,a], [,b]) => b - a)
-//     .slice(0, 8)
-//     .map(([word, score]) => ({ word, score }));
-// }
-
-// Function to extract keywords using Gemini LLM
-async function extractKeywordsWithGemini(jobDescription: string, resumeText: string): Promise<string[]> {
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY') {
-    console.warn("Gemini API key is not configured. Skipping LLM keyword extraction.");
-    return [];
-  }
-
-  const prompt = `Given the following job description and resume text, identify the 16 most important technical skills, tools, and keywords that appear in both. Focus on terms relevant to software development, data science, or engineering. Provide the response as a JSON array of strings, for example: ["React", "TypeScript", "AWS", "Python", "Machine Learning"].\n\nJob Description:\n${jobDescription}\n\nResume Text:\n${resumeText}`;
-
-  try {
-    const response = await fetch(`${GEMINI_API_URL}${GEMINI_API_KEY}` , {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }]
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Gemini API error: ${response.status} - ${errorData.error.message}`);
-    }
-
-    const data = await response.json();
-    const textResponse = data.candidates[0]?.content?.parts[0]?.text;
-
-    if (textResponse) {
-      // Attempt to parse the JSON array from the LLM's text response
-      const cleanedResponse = textResponse.replace(/```json|```/g, '').trim();
-      return JSON.parse(cleanedResponse);
-    }
-    return [];
-
-  } catch (error) {
-    console.error("Error calling Gemini API:", error);
-    throw error; // Re-throw to be caught by getTopKeywords fallback
-  }
-}
-
-// Function to rank missing skills using Gemini LLM
-async function rankMissingSkillsWithGemini(jobDescription: string, missingSkills: string[]): Promise<string[]> {
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY') {
-    console.warn("Gemini API key is not configured. Skipping LLM missing skill ranking.");
-    return missingSkills; // Return original skills if LLM is not configured
-  }
-
-  if (missingSkills.length === 0) {
-    return [];
-  }
-
-  const prompt = `Given the following job description, rank the importance of the following missing skills for this role, from most important to least important. Provide the response as a JSON array of strings, for example: ["Skill A", "Skill B", "Skill C"].\n\nJob Description:\n${jobDescription}\n\nMissing Skills:\n${missingSkills.join(', ')}`;
-
-  try {
-    const response = await fetch(`${GEMINI_API_URL}${GEMINI_API_KEY}` , {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }]
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Gemini API error: ${response.status} - ${errorData.error.message}`);
-    }
-
-    const data = await response.json();
-    const textResponse = data.candidates[0]?.content?.parts[0]?.text;
-
-    if (textResponse) {
-      const cleanedResponse = textResponse.replace(/```json|```/g, '').trim();
-      return JSON.parse(cleanedResponse);
-    }
-    return missingSkills; // Fallback to original order if parsing fails
-
-  } catch (error) {
-    console.error("Error calling Gemini API for skill ranking:", error);
-    return missingSkills; // Fallback to original order on error
-  }
-}
-
-// Generate insights based on analysis
-async function generateInsights(
-  fitScore: number, 
-  matchedSkills: string[], 
-  missingSkills: string[],
+// Consolidate all LLM calls into a single function
+async function getCombinedInsightsWithGemini(
   jobDescription: string,
-  resumeText: string
-): Promise<string[]> {
-  const insights: string[] = [];
-  
-  // Rank missing skills using LLM
-  const rankedMissingSkills = await rankMissingSkillsWithGemini(jobDescription, missingSkills);
-  await delay(500); // Add a small delay
-
-  // Fit score messages (first insight)
-  if (fitScore < 50) {
-    insights.push("This role might not be the best fit for you. Consider focusing on roles that align more closely with your current skill set.");
-  } else if (fitScore >= 50 && fitScore < 60) {
-    insights.push("A moderate match. You have some relevant skills, but significant gaps exist. Focus on developing key missing areas.");
-  } else if (fitScore >= 60 && fitScore < 70) {
-    insights.push("Good match! You meet many requirements, but there's room to grow. Highlight your strengths and consider upskilling in a few areas.");
-  } else if (fitScore >= 70 && fitScore < 80) {
-    insights.push("Strong match! Your resume aligns well with the job. Emphasize your strongest points and address minor skill gaps.");
-  } else { // 80-100%
-    insights.push("Excellent match! Your resume aligns very well with the job requirements. You are a highly suitable candidate.");
+  resumeText: string,
+  missingSkills: string[],
+  fitScore: number
+): Promise<CombinedAnalysisOutput | null> {
+  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY') {
+    console.warn("Gemini API key is not configured. Skipping combined LLM insights.");
+    return null;
   }
-  
-  // General alignment paragraph (second insight)
-  const generalAlignmentPrompt = `Based on the fit score (${fitScore}%), the matched skills (${matchedSkills.join(', ') || 'none'}), and missing skills (${missingSkills.join(', ') || 'none'}) for the job description:\n\nJob Description:\n${jobDescription}\n\nResume Text (partial for context):\n${resumeText.substring(0, 500)}...
-\nProvide a concise paragraph (1-2 sentences) summarizing the overall alignment of the resume with the job description. Be encouraging but honest about areas for improvement.`;
+
+  const prompt = `You are a resume analysis AI. Given a job description, a resume, a list of missing skills from the resume for the job, and a fit score (out of 100), provide a comprehensive analysis.
+
+Your response MUST be a single JSON object with the following structure:
+{
+  "generalInsight": "A concise paragraph (3-5 sentences) summarizing the overall fit, highlighting strengths and major gaps based on the fit score. Tailor it to be encouraging yet realistic. For example, 'The candidate presents a strong foundational match with a score of X, particularly excelling in Y and Z. To further enhance their profile, focusing on A and B would be highly beneficial.'",
+  "rankedMissingSkills": ["Skill A", "Skill B", "Skill C"], // List of missing skills from most to least important for the job, based on the job description.
+  "highlightAreas": ["Area 1", "Area 2"], // 5-7 specific areas/sections/keywords/experiences from the resume that are most relevant to the job description and should be highlighted. Provide concrete examples.
+  "projectSuggestions": ["Project A: Description A.", "Project B: Description B."], // 3-5 concise project ideas (1-2 sentences each) that demonstrate proficiency in the missing skills.
+  "matchedSkills": ["Skill X", "Skill Y", "Skill Z"], // 5-10 most important technical skills, tools, and keywords that appear in BOTH the job description and resume, focusing on relevance.
+  "resumeKeywords": ["Keyword1", "Keyword2"] // 5-10 highly relevant keywords and phrases from the resume that best represent the candidate's core profile and expertise. Use these for job searching.
+}
+
+Strictly follow the JSON format and do not include any other text outside the JSON object.
+
+Job Description:\n${jobDescription}\n
+Resume Text:\n${resumeText}
+
+Missing Skills (from resume for this job):\n${missingSkills.length > 0 ? missingSkills.join(', ') : 'None'}
+
+Fit Score: ${fitScore}/100`;
 
   try {
-    const generalAlignmentResponse = await fetch(`${GEMINI_API_URL}${GEMINI_API_KEY}` , {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: generalAlignmentPrompt
+    const response = await retryWithExponentialBackoff(async () => {
+      return await fetch(`${GEMINI_API_URL}${GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: prompt
+            }]
           }]
-        }]
-      }),
+        }),
+      });
     });
 
-    if (generalAlignmentResponse.ok) {
-      const data = await generalAlignmentResponse.json();
-      const textResponse = data.candidates[0]?.content?.parts[0]?.text;
-      if (textResponse) {
-        insights.push(textResponse.trim());
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`Gemini API error: ${response.status} - ${errorData.error.message}`);
+    }
+
+    const data = await response.json();
+    const textResponse = data.candidates[0]?.content?.parts[0]?.text;
+
+    if (textResponse) {
+      const cleanedResponse = textResponse.replace(/```json|```/g, '').trim();
+      return JSON.parse(cleanedResponse) as CombinedAnalysisOutput;
+    }
+    return null;
+
+  } catch (error) {
+    console.error("Error calling Gemini API for combined insights:", error);
+    throw error; // Re-throw to be caught by analyzeFit
+  }
+}
+
+const GOOGLE_CSE_CX = '20f909c31d0bf488d'; // Your Custom Search Engine ID
+
+async function getLinkedInJobLinks(keywords: string[]): Promise<string[]> {
+  if (keywords.length === 0) {
+    return [];
+  }
+
+  // Using VITE_GEMINI_API_KEY for Google Custom Search API as per user's setup
+  const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!API_KEY || API_KEY === 'YOUR_GEMINI_API_KEY') {
+    console.warn("Google Custom Search API key is not configured. Skipping LinkedIn job search.");
+    return [];
+  }
+
+  const searchQuery = `site:linkedin.com/jobs/ ${keywords.join(' ')}`;
+  const apiUrl = `https://www.googleapis.com/customsearch/v1?key=${API_KEY}&cx=${GOOGLE_CSE_CX}&q=${encodeURIComponent(searchQuery)}&num=10`;
+
+  try {
+    const response = await retryWithExponentialBackoff(async () => {
+      return await fetch(apiUrl);
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`Google Custom Search API error: ${response.status} - ${errorData.error.message}`);
+    }
+
+    const data = await response.json();
+    const jobLinks: string[] = [];
+
+    if (data.items) {
+      for (const item of data.items) {
+        if (item.link && item.link.includes('linkedin.com/jobs')) {
+          jobLinks.push(item.link);
+        }
       }
-    } else {
-      console.warn("Failed to get general alignment insight from LLM.");
     }
-  } catch (error) {
-    console.error("Error fetching general alignment insight:", error);
-  }
-
-  if (matchedSkills.length > 0) {
-    insights.push(`Strong alignment in ${matchedSkills.slice(0, 3).join(', ')} skills.`);
-  }
-  
-  if (rankedMissingSkills.length > 0) {
-    insights.push(`Consider developing skills in ${rankedMissingSkills.slice(0, 3).join(', ')} to significantly improve your match.`);
-  }
-  
-  // Remove redundant specific insights if general insights are robust
-  // This part needs careful consideration to avoid duplication if LLM is already providing these.
-  // For now, I'll keep the existing specific insights as well, but we can refine if needed.
-
-  return insights;
-}
-
-// New LLM calls for specific insights
-async function getHighlightAreasWithGemini(jobDescription: string, resumeText: string): Promise<string[]> {
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY') {
-    console.warn("Gemini API key is not configured. Skipping LLM highlight areas.");
-    return [];
-  }
-
-  const prompt = `Given the following job description and resume text, identify 5-7 *specific areas, keywords, experiences, or projects from the resume* that are most relevant to the job description and should be highlighted. Provide concrete examples where possible. Provide the response as a JSON array of strings. Each string should be a concise actionable point. For example: ["Emphasize \"React\" experience in the technical skills section", "Highlight the \"E-commerce Platform Development\" project from your resume as it aligns with scalable systems.", "Draw attention to your \"Project Management\" experience under the professional experience section."]\n\nJob Description:\n${jobDescription}\n\nResume Text:\n${resumeText}`;
-
-  try {
-    const response = await fetch(`${GEMINI_API_URL}${GEMINI_API_KEY}` , {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }]
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Gemini API error: ${response.status} - ${errorData.error.message}`);
-    }
-
-    const data = await response.json();
-    const textResponse = data.candidates[0]?.content?.parts[0]?.text;
-
-    if (textResponse) {
-      const cleanedResponse = textResponse.replace(/```json|```/g, '').trim();
-      return JSON.parse(cleanedResponse);
-    }
-    return [];
+    return jobLinks;
 
   } catch (error) {
-    console.error("Error calling Gemini API for highlight areas:", error);
-    return [];
-  }
-}
-
-async function getProjectSuggestionsWithGemini(jobDescription: string, missingSkills: string[]): Promise<string[]> {
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY') {
-    console.warn("Gemini API key is not configured. Skipping LLM project suggestions.");
-    return [];
-  }
-
-  if (missingSkills.length === 0) {
-    return [];
-  }
-
-  const prompt = `Given the following job description and a list of missing skills, suggest 2-3 broader project concepts or side projects that would help improve your portfolio for this role. For each project, provide a brief title, things to add to the project, and skills it will prove. Format each project as a single string within a JSON array, ensuring newlines are escaped as \\n. Like this example: ["Project Title One\\n- E.g. Things to add: Implement a feature with [specific technology]\\n- E.g. Skills this will prove: [Skill 1], [Skill 2]", "Project Title Two\\n- E.g. Things to add: Integrate with a [type] API\\n- E.g. Skills this will prove: [Skill 3], [Skill 4]"]\n\nJob Description:\n${jobDescription}\n\nMissing Skills:\n${missingSkills.join(', ')}`;
-
-  try {
-    const response = await fetch(`${GEMINI_API_URL}${GEMINI_API_KEY}` , {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }]
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Gemini API error: ${response.status} - ${errorData.error.message}`);
-    }
-
-    const data = await response.json();
-    const textResponse = data.candidates[0]?.content?.parts[0]?.text;
-
-    if (textResponse) {
-      const cleanedResponse = textResponse.replace(/```json|```/g, '').trim();
-      return JSON.parse(cleanedResponse);
-    }
-    return [];
-
-  } catch (error) {
-    console.error("Error calling Gemini API for project suggestions:", error);
+    console.error("Error fetching LinkedIn job links:", error);
     return [];
   }
 }
@@ -455,54 +289,67 @@ export async function analyzeFit(jobDescription: string, resumeFile: File, onPro
     onProgress?.("Calculating fit score...");
     // Calculate base similarity score using TF-IDF
     const baseFitScore = calculateTFIDFSimilarity(jobDescription, resumeText);
+    console.log(`Debug: Job Description (raw): ${jobDescription.substring(0, 200)}...`);
+    console.log(`Debug: Resume Text (raw, partial): ${resumeText.substring(0, 200)}...`);
     
     // Extract skills from both texts
     const jobSkills = extractSkills(jobDescription);
+    console.log("Debug: Extracted Job Skills:", jobSkills);
     const resumeSkills = extractSkills(resumeText);
     
     // Calculate skill-based adjustments
     const matchedSkills = resumeSkills.filter(skill => jobSkills.includes(skill));
     const missingSkills = jobSkills.filter(skill => !resumeSkills.includes(skill));
+
+    console.log(`Debug: baseFitScore: ${baseFitScore}`);
+    console.log(`Debug: matchedSkills.length: ${matchedSkills.length}`);
+    console.log(`Debug: jobSkills.length: ${jobSkills.length}`);
     
     // Adjust fit score based on skill matching
     let adjustedFitScore = baseFitScore;
     if (jobSkills.length > 0) {
       const skillMatchRatio = matchedSkills.length / jobSkills.length;
+      console.log(`Debug: Skill Match Ratio: ${skillMatchRatio}`);
       adjustedFitScore = (baseFitScore * 0.3) + (skillMatchRatio * 100 * 0.7); // Changed weights to 0.7 and 0.3
+    } else { // If no job skills are extracted, skill match contributes 0
+      adjustedFitScore = baseFitScore * 0.3; // Only base score contributes
     }
+    console.log(`Debug: Adjusted Fit Score (before final rounding): ${adjustedFitScore}`);
     
     // Cap the score at 100 and ensure minimum of 0
     const finalFitScore = Math.min(100, Math.max(0, Math.round(adjustedFitScore)));
     
     onProgress?.("Generating insights and ranking skills...");
     // Generate insights
-    const insights = await generateInsights(
-      finalFitScore, 
-      matchedSkills, 
-      missingSkills, 
+    const combinedInsights = await getCombinedInsightsWithGemini(
       jobDescription, 
-      resumeText
+      resumeText, 
+      missingSkills, // Use rule-based missing skills for LLM input
+      finalFitScore
     );
     await delay(500); // Add a small delay after generateInsights
 
-    onProgress?.("Identifying areas to highlight...");
-    // New LLM calls for specific insights
-    const highlightAreas = await getHighlightAreasWithGemini(jobDescription, resumeText);
-    await delay(500); // Add a small delay after getHighlightAreas
+    const insights = combinedInsights?.generalInsight ? [combinedInsights.generalInsight] : [];
+    const rankedMissingSkills = combinedInsights?.rankedMissingSkills || [];
+    const highlightAreas = combinedInsights?.highlightAreas || [];
+    const projectSuggestions = combinedInsights?.projectSuggestions || [];
+    const llmMatchedSkills = combinedInsights?.matchedSkills || [];
+    const resumeKeywords = combinedInsights?.resumeKeywords || [];
 
-    onProgress?.("Suggesting projects...");
-    const projectSuggestions = await getProjectSuggestionsWithGemini(jobDescription, missingSkills);
-    await delay(500); // Add a small delay after getProjectSuggestions
+    onProgress?.("Searching for LinkedIn job listings...");
+    const linkedinJobLinks = await getLinkedInJobLinks(resumeKeywords);
+    await delay(500); // Add a small delay after searching for job links
 
     return {
       fitScore: finalFitScore,
-      matchedSkills: [...new Set(matchedSkills)], // Remove duplicates
-      missingSkills: [...new Set(missingSkills)], // Remove duplicates
+      matchedSkills: llmMatchedSkills, // Use LLM-generated matched skills for output
+      missingSkills: rankedMissingSkills, // Use LLM-ranked missing skills for output
       insights,
-      // topKeywords, // Removed
-      fitMessage: insights[0],
+      fitMessage: combinedInsights?.generalInsight || '',
       highlightAreas,
-      projectSuggestions
+      projectSuggestions,
+      resumeKeywords,
+      linkedinJobLinks // Include LinkedIn job links in the result
     };
     
   } catch (error: any) {
