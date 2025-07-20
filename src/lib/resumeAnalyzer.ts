@@ -40,7 +40,6 @@ interface AnalysisResult {
   highlightAreas: string[]; // New field for LLM-generated highlight areas
   projectSuggestions: string[]; // New field for LLM-generated project suggestions
   resumeKeywords: string[]; // New field for LLM-generated resume keywords
-  linkedinJobLinks: string[]; // New field for LinkedIn job links
 }
 
 interface CombinedAnalysisOutput {
@@ -115,14 +114,10 @@ function extractSkills(text: string): string[] {
 function calculateTFIDFSimilarity(text1: string, text2: string): number {
   const tokens1 = cleanAndTokenize(text1);
   const tokens2 = cleanAndTokenize(text2);
-  console.log("Debug TFIDF: Tokens 1 (Job Description)", tokens1);
-  console.log("Debug TFIDF: Tokens 2 (Resume Text)", tokens2);
   
   // Calculate term frequencies
   const tf1 = calculateTermFrequency(tokens1);
   const tf2 = calculateTermFrequency(tokens2);
-  console.log("Debug TFIDF: Term Frequencies 1 (Job Description)", tf1);
-  console.log("Debug TFIDF: Term Frequencies 2 (Resume Text)", tf2);
   
   // Get all unique terms
   const allTerms = new Set([...Object.keys(tf1), ...Object.keys(tf2)]);
@@ -181,10 +176,10 @@ async function getCombinedInsightsWithGemini(
 Your response MUST be a single JSON object with the following structure:
 {
   "generalInsight": "A concise paragraph (3-5 sentences) summarizing the overall fit, highlighting strengths and major gaps based on the fit score. Tailor it to be encouraging yet realistic. For example, 'The candidate presents a strong foundational match with a score of X, particularly excelling in Y and Z. To further enhance their profile, focusing on A and B would be highly beneficial.'",
-  "rankedMissingSkills": ["Skill A", "Skill B", "Skill C"], // List of missing skills from most to least important for the job, based on the job description.
+  "rankedMissingSkills": ["Skill A", "Skill B", "Skill C"], // List of skills from the job description not present in the resume, ranked from most to least important for the job. Infer missing skills that are implied by the job description but not directly stated.
   "highlightAreas": ["Area 1", "Area 2"], // 5-7 specific areas/sections/keywords/experiences from the resume that are most relevant to the job description and should be highlighted. Provide concrete examples.
-  "projectSuggestions": ["Project A: Description A.", "Project B: Description B."], // 3-5 concise project ideas (1-2 sentences each) that demonstrate proficiency in the missing skills.
-  "matchedSkills": ["Skill X", "Skill Y", "Skill Z"], // 5-10 most important technical skills, tools, and keywords that appear in BOTH the job description and resume, focusing on relevance.
+  "projectSuggestions": ["1. Project Idea 1: Description.", "2. Project Idea 2: Description."], // 3-5 concise project ideas (1-2 sentences each) that demonstrate proficiency in the missing skills. Provide these as a numbered list.
+  "matchedSkills": ["Skill X", "Skill Y", "Skill Z"], // 5-10 most important technical and soft skills, tools, and keywords that appear in BOTH the job description and resume, focusing on relevance. Infer skills (e.g., leadership, teamwork) from experience descriptions even if not explicitly named.
   "resumeKeywords": ["Keyword1", "Keyword2"] // 5-10 highly relevant keywords and phrases from the resume that best represent the candidate's core profile and expertise. Use these for job searching.
 }
 
@@ -234,51 +229,6 @@ Fit Score: ${fitScore}/100`;
   }
 }
 
-const GOOGLE_CSE_CX = '20f909c31d0bf488d'; // Your Custom Search Engine ID
-
-async function getLinkedInJobLinks(keywords: string[]): Promise<string[]> {
-  if (keywords.length === 0) {
-    return [];
-  }
-
-  // Using VITE_GEMINI_API_KEY for Google Custom Search API as per user's setup
-  const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!API_KEY || API_KEY === 'YOUR_GEMINI_API_KEY') {
-    console.warn("Google Custom Search API key is not configured. Skipping LinkedIn job search.");
-    return [];
-  }
-
-  const searchQuery = `site:linkedin.com/jobs/ ${keywords.join(' ')}`;
-  const apiUrl = `https://www.googleapis.com/customsearch/v1?key=${API_KEY}&cx=${GOOGLE_CSE_CX}&q=${encodeURIComponent(searchQuery)}&num=10`;
-
-  try {
-    const response = await retryWithExponentialBackoff(async () => {
-      return await fetch(apiUrl);
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Google Custom Search API error: ${response.status} - ${errorData.error.message}`);
-    }
-
-    const data = await response.json();
-    const jobLinks: string[] = [];
-
-    if (data.items) {
-      for (const item of data.items) {
-        if (item.link && item.link.includes('linkedin.com/jobs')) {
-          jobLinks.push(item.link);
-        }
-      }
-    }
-    return jobLinks;
-
-  } catch (error) {
-    console.error("Error fetching LinkedIn job links:", error);
-    return [];
-  }
-}
-
 export async function analyzeFit(jobDescription: string, resumeFile: File, onProgress?: (stage: string) => void): Promise<AnalysisResult> {
   try {
     onProgress?.("Extracting text from PDF...");
@@ -289,32 +239,23 @@ export async function analyzeFit(jobDescription: string, resumeFile: File, onPro
     onProgress?.("Calculating fit score...");
     // Calculate base similarity score using TF-IDF
     const baseFitScore = calculateTFIDFSimilarity(jobDescription, resumeText);
-    console.log(`Debug: Job Description (raw): ${jobDescription.substring(0, 200)}...`);
-    console.log(`Debug: Resume Text (raw, partial): ${resumeText.substring(0, 200)}...`);
     
     // Extract skills from both texts
     const jobSkills = extractSkills(jobDescription);
-    console.log("Debug: Extracted Job Skills:", jobSkills);
     const resumeSkills = extractSkills(resumeText);
     
     // Calculate skill-based adjustments
     const matchedSkills = resumeSkills.filter(skill => jobSkills.includes(skill));
     const missingSkills = jobSkills.filter(skill => !resumeSkills.includes(skill));
 
-    console.log(`Debug: baseFitScore: ${baseFitScore}`);
-    console.log(`Debug: matchedSkills.length: ${matchedSkills.length}`);
-    console.log(`Debug: jobSkills.length: ${jobSkills.length}`);
-    
     // Adjust fit score based on skill matching
     let adjustedFitScore = baseFitScore;
     if (jobSkills.length > 0) {
       const skillMatchRatio = matchedSkills.length / jobSkills.length;
-      console.log(`Debug: Skill Match Ratio: ${skillMatchRatio}`);
       adjustedFitScore = (baseFitScore * 0.3) + (skillMatchRatio * 100 * 0.7); // Changed weights to 0.7 and 0.3
     } else { // If no job skills are extracted, skill match contributes 0
       adjustedFitScore = baseFitScore * 0.3; // Only base score contributes
     }
-    console.log(`Debug: Adjusted Fit Score (before final rounding): ${adjustedFitScore}`);
     
     // Cap the score at 100 and ensure minimum of 0
     const finalFitScore = Math.min(100, Math.max(0, Math.round(adjustedFitScore)));
@@ -336,10 +277,6 @@ export async function analyzeFit(jobDescription: string, resumeFile: File, onPro
     const llmMatchedSkills = combinedInsights?.matchedSkills || [];
     const resumeKeywords = combinedInsights?.resumeKeywords || [];
 
-    onProgress?.("Searching for LinkedIn job listings...");
-    const linkedinJobLinks = await getLinkedInJobLinks(resumeKeywords);
-    await delay(500); // Add a small delay after searching for job links
-
     return {
       fitScore: finalFitScore,
       matchedSkills: llmMatchedSkills, // Use LLM-generated matched skills for output
@@ -349,7 +286,6 @@ export async function analyzeFit(jobDescription: string, resumeFile: File, onPro
       highlightAreas,
       projectSuggestions,
       resumeKeywords,
-      linkedinJobLinks // Include LinkedIn job links in the result
     };
     
   } catch (error: any) {

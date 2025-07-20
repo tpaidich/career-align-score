@@ -20,7 +20,6 @@ interface AnalysisResult {
   highlightAreas: string[]; // New field for LLM-generated highlight areas
   projectSuggestions: string[]; // New field for LLM-generated project suggestions
   resumeKeywords: string[]; // New field for LLM-generated resume keywords
-  linkedinJobLinks: string[]; // New field for LLM-generated LinkedIn job links
 }
 
 export function ResumeFitAnalyzer() {
@@ -328,10 +327,9 @@ ${result.insights.length > 0 ? result.insights.map(insight => `• ${insight}`).
               </div>
 
               <Tabs defaultValue="highlight-areas" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="highlight-areas">Areas to Highlight</TabsTrigger>
                   <TabsTrigger value="project-suggestions">Project Suggestions</TabsTrigger>
-                  <TabsTrigger value="job-listings">Related Job Listings</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="highlight-areas">
@@ -369,42 +367,6 @@ ${result.insights.length > 0 ? result.insights.map(insight => `• ${insight}`).
                             <li key={index}>{project}</li>
                           ))}
                         </ul>
-                      </CardContent>
-                    </Card>
-                  )}
-                </TabsContent>
-
-                <TabsContent value="job-listings">
-                  {result.linkedinJobLinks.length > 0 ? (
-                    <Card className="shadow-soft animate-in fade-in slide-in-from-bottom-4 duration-500 delay-400 mt-6">
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-indigo-600 dark:text-indigo-300">
-                          <Download className="h-5 w-5" />
-                          Related Job Listings (LinkedIn)
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <ul className="list-disc list-inside space-y-2 text-muted-foreground">
-                          {result.linkedinJobLinks.map((link, index) => (
-                            <li key={index}>
-                              <a href={link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
-                                {link}
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
-                      </CardContent>
-                    </Card>
-                  ) : (
-                    <Card className="shadow-soft animate-in fade-in slide-in-from-bottom-4 duration-500 delay-400 mt-6">
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-indigo-600 dark:text-indigo-300">
-                          <Download className="h-5 w-5" />
-                          Related Job Listings (LinkedIn)
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <p className="text-muted-foreground">No related job listings found. Try adjusting the job description or resume keywords.</p>
                       </CardContent>
                     </Card>
                   )}
