@@ -67,29 +67,23 @@ To run this project locally:
 
 1.  **Clone the repository:**
     ```bash
-    git clone [your_repo_url]
+    git clone https://github.com/tpaidich/resume-scorer.git
     cd resume-scorer
     ```
 2.  **Install dependencies:**
     ```bash
-    bun install
     # or npm install
     ```
 3.  **Configure API Key:**
     -   Obtain a Google Gemini API Key from the Google AI Studio.
     -   Create a `.env` file in the project root.
-    -   Add your API key to the `.env` file:
-        ```
-        VITE_GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
-        ```
-        (Replace `YOUR_GEMINI_API_KEY_HERE` with your actual API key.)
+    -   Add your API key to the `.env` file
+      
 4.  **Run the development server:**
     ```bash
-    bun dev
     # or npm run dev
     ```
-5.  Open your browser to the address provided (usually `http://localhost:5173`).
+5.  Open your browser to the address provided.
 
 ---
 
-Feel free to customize this README further with installation instructions, local development setup, or any other details you deem relevant!
