@@ -72,7 +72,7 @@ To run this project locally:
     ```
 2.  **Install dependencies:**
     ```bash
-    # or npm install
+    # npm install
     ```
 3.  **Configure API Key:**
     -   Obtain a Google Gemini API Key from the Google AI Studio.
@@ -81,7 +81,7 @@ To run this project locally:
       
 4.  **Run the development server:**
     ```bash
-    # or npm run dev
+    # npm run dev
     ```
 5.  Open your browser to the address provided.
 
