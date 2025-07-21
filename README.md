@@ -2,6 +2,8 @@
 
 ## Overview
 
+![alt text](https://github.com/tpaidich/resume-scorer/blob/main/resume%20scorer%20dashboard.png)
+
 A web application designed to help you understand how well your resume aligns with a specific job description. The tool provides a comprehensive fit score, highlights key matching areas, identifies missing skills, and suggests relevant projects and keywords. Front-end created in TypeScript using Lovable.dev.
 
 ## Features
